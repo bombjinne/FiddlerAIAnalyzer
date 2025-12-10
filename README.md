@@ -39,6 +39,9 @@
 3) 在输入框输入问题，按 Enter 或点击发送。若希望换行，使用 Shift+Enter。
 4) 插件会流式展示回复，可随时复制查看。
 
+插件界面概览：
+<img width="2002" height="959" alt="ScreenShot_2025-12-10_160055_726" src="https://github.com/user-attachments/assets/db2d079f-7455-4b37-ba0a-882aaf7b6a89" />
+
 ### 常见问题
 - **未看到标签页**：确认已将所有 DLL 放入 D:\Documents\Fiddler2\Scripts，并重启 Fiddler。
 - **API 调用失败**：检查网络、API Key，或在日志中查看错误信息。
