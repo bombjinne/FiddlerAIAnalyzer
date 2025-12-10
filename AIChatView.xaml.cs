@@ -1,9 +1,12 @@
 ﻿using Fiddler;
+using Markdig;
+using mshtml;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Drawing.Printing;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -17,6 +20,7 @@ using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Navigation;
 using System.Windows.Threading;
 
 namespace FiddlerAIAnalyzerPlugin
@@ -25,19 +29,16 @@ namespace FiddlerAIAnalyzerPlugin
 
     public partial class AIChatView : UserControl
     {
-
+        
         private bool _isSending = false;
         private PluginSettings _currentSettings;
-        // 在您的类的字段区域添加以下静态只读字段
         private static readonly Brush UserMessageBackground = new SolidColorBrush(Color.FromArgb(30, 30, 30, 30)); // 浅灰色，半透明效果
         private static readonly Brush AiMessageBackground = new SolidColorBrush(Color.FromArgb(30, 0, 122, 204));   // 浅蓝色，半透明效果
         private static readonly Brush MessageBorderBrush = new SolidColorBrush(Color.FromRgb(200, 200, 200)); // 边框颜色
         private const double MessageBorderThickness = 1.0; // 边框粗细
 
 
-        // 获取当前选中的请求
-
-        private void InputBox_KeyDown(object sender, KeyEventArgs e)
+        private void InputBox_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
         {
             if (e.Key == Key.Enter && !e.IsRepeat)
             {
@@ -97,7 +98,6 @@ namespace FiddlerAIAnalyzerPlugin
                         session.RequestBody.Length > 0)
                     {
                         string contentType = "";
-                        // 安全地获取 Content-Type
                         if (session.oRequest.headers != null)
                         {
                             contentType = session.oRequest.headers["Content-Type"] ?? "";
@@ -146,7 +146,6 @@ namespace FiddlerAIAnalyzerPlugin
                         session.ResponseBody.Length > 0)
                     {
                         string contentType = "";
-                        // 安全地获取 Content-Type
                         if (session.oResponse.headers != null)
                         {
                             contentType = session.oResponse.headers["Content-Type"] ?? "";
@@ -201,7 +200,7 @@ namespace FiddlerAIAnalyzerPlugin
         public async Task StreamQwenAPIResponse(
     string prompt,
     string apiKey,
-    Action<string> onTextReceived,   // 注意：参数名必须一致
+    Action<string> onTextReceived,   
     Action<string> onError)
         {
             var client = new HttpClient();
@@ -283,204 +282,147 @@ namespace FiddlerAIAnalyzerPlugin
                 onError?.Invoke($"[网络请求失败: {ex.Message}]");
             }
         }
-        private async void OnSendButtonClick(object sender, RoutedEventArgs e)
+
+
+        /// <summary>
+        /// 将 Markdown 文本转换为 HTML
+        /// </summary>
+        private string ConvertMarkdownToHtml(string markdown)
         {
-            // ✅ 检查核心控件是否存在
-            if (MessagesRichTextBox?.Document == null)
-            {
-                FiddlerApplication.Log.LogString("[ERROR] MessagesRichTextBox.Document is null!");
-                return;
-            }
+            if (string.IsNullOrWhiteSpace(markdown))
+                return "";
 
-            if (_isSending)
-            {
-                // 注意：这条提示消息现在也是可选的了
-                AddMessage("[提示] 正在处理上一条请求，请稍候...", isUser: false);
-                return;
-            }
+            var pipeline = new MarkdownPipelineBuilder()
+                .UseAdvancedExtensions() // 启用表格、删除线、任务列表等扩展
+                .UseBootstrap() // 可选：使用 Bootstrap 样式
+                .Build();
 
-            // 从UI收集最新设置
-            CollectSettingsFromUI();
+            string html = Markdown.ToHtml(markdown, pipeline);
 
-            string prompt = InputBox.Text.Trim();
-            if (string.IsNullOrEmpty(prompt))
-            {
-                AddMessage("请输入问题", isUser: false);
-                return;
-            }
+            string styledHtml = $@"
+<style>
+    body {{
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        font-size: 14px;
+        line-height: 1.6;
+        color: #333;
+        background-color: #fff;
+        margin: 10px;
+    }}
+    pre {{
+        background-color: #f6f8fa;
+        border-radius: 6px;
+        padding: 16px;
+        overflow: auto;
+        font-size: 85%;
+        line-height: 1.45;
+        border: 1px solid #d0d7de;
+    }}
+    code {{
+        background-color: rgba(110,118,129,0.1);
+        padding: 0.2em 0.4em;
+        border-radius: 6px;
+        font-size: 85%;
+    }}
+    pre code {{
+        background-color: transparent;
+        padding: 0;
+    }}
+    blockquote {{
+        margin: 0;
+        padding: 0 1em;
+        color: #6a737d;
+        border-left: 0.25em solid #dfe2e5;
+    }}
+    h1, h2, h3, h4, h5, h6 {{
+        margin-top: 24px;
+        margin-bottom: 16px;
+        font-weight: 600;
+        line-height: 1.25;
+    }}
+    /* 确保代码块内的滚动条可见 */
+    ::-webkit-scrollbar {{
+        width: 8px;
+        height: 8px;
+    }}
+    ::-webkit-scrollbar-track {{
+        background: #f1f1f1; 
+    }}
+    ::-webkit-scrollbar-thumb {{
+        background: #c1c1c1; 
+        border-radius: 4px;
+    }}
+    ::-webkit-scrollbar-thumb:hover {{
+        background: #a8a8a8; 
+    }}
+</style>
+{html}";
 
-            InputBox.Clear();
-            string apiKey = ApiKeyBox.Password;
-            if (string.IsNullOrWhiteSpace(apiKey))
-            {
-                AddMessage("[错误] 请先设置有效的 API Key", isUser: false);
-                return;
-            }
-
-            string requestContent = GetSelectedRequestContent();
-
-            string fullPrompt;
-            string userMessageToDisplay;
-            if (requestContent != null)
-            {
-                fullPrompt = $"{prompt}\n\n以下是相关的 HTTP 请求和响应信息，请基于此进行分析：\n\n{requestContent}";
-                userMessageToDisplay = $"{prompt}\n\n--- 已附带请求摘要 ---\n{GenerateRequestSummary()}";
-            }
-            else
-            {
-                fullPrompt = prompt;
-                userMessageToDisplay = prompt;
-            }
-
-            // 1. 先添加用户消息到聊天记录 (这部分保持不变，但内部实现已修改为可选)
-            AddMessage(userMessageToDisplay, isUser: true);
-
-
-            var aiResponseParagraph = new Paragraph()
-            {
-                Margin = new Thickness(0, 5, 0, 5),
-                Padding = new Thickness(8, 6, 8, 6), // 增加内边距
-                                                     // --- 添加背景色和边框 ---
-                Background = AiMessageBackground, // AI 消息背景色
-                BorderBrush = MessageBorderBrush,
-                BorderThickness = new Thickness(MessageBorderThickness),
-            };
-            // 添加一个初始的 Run，用于流式更新 AI 回复的实际文本内容
-            var aiResponseRun = new Run("");
-
-            // （可选）添加一个表示身份的小标签，这个 Run 可以有不同的样式
-            var aiLabelRun = new Run("[AI] ") { Foreground = Brushes.Green, FontWeight = FontWeights.Bold }; // 标签颜色与 AddMessage 中一致
-            aiResponseParagraph.Inlines.Add(aiLabelRun);
-
-            aiResponseParagraph.Inlines.Add(aiResponseRun);
-
-            MessagesRichTextBox.Document.Blocks.Add(aiResponseParagraph);
-            MessagesRichTextBox.ScrollToEnd();
-
-            _isSending = true; // 设置发送状态
-                               // --- 修改结束 ---
-
-            try
-            {
-                // --- 修改传参：传递 Paragraph 和 Run 给流式处理方法 ---
-                // 调用流式处理方法，传入必要的对象以便它可以更新UI
-                await StreamAndAppendResponse(fullPrompt, apiKey, aiResponseParagraph, aiResponseRun);
-                // --- 修改结束 ---
-            }
-            catch (Exception ex)
-            {
-                // 确保在UI线程上更新UI
-                Application.Current.Dispatcher.Invoke(() =>
-                {
-                    // --- 修改错误处理：将错误信息也作为可选文本添加 ---
-                    // 错误信息也应该让用户能复制，所以添加到 Paragraph 中
-                    aiResponseParagraph.Inlines.Add(new Run($"\n[严重错误: {ex.Message}]") { Foreground = Brushes.Red });
-                    MessagesRichTextBox.ScrollToEnd();
-                    // --- 修改结束 ---
-                });
-            }
-            finally
-            {
-                // 确保在UI线程上重置状态
-                MessagesRichTextBox.Dispatcher.Invoke(() =>
-                {
-                    _isSending = false;
-                });
-            }
-        }
-
-
-        // 新增辅助方法：在后台线程流式接收，并调度到 UI 更新 (修改参数)
-        private async Task StreamAndAppendResponse(string prompt, string apiKey, Paragraph targetParagraph, Run targetRun)
-        {
-            try
-            {
-                StringBuilder accumulated = new StringBuilder();
-
-                await StreamQwenAPIResponse(prompt, apiKey,
-                    onTextReceived: (text) =>
-                    {
-                        accumulated.Append(text);
-
-                        // 使用 UI Element 自带的 Dispatcher 更新 UI
-                        MessagesRichTextBox.Dispatcher.Invoke(() =>
-                        {
-                            // --- 修改更新方式 ---
-                            // 直接更新 Run 的文本内容
-                            targetRun.Text = accumulated.ToString();
-                            MessagesRichTextBox.ScrollToEnd();
-                            // --- 修改结束 ---
-                        });
-                    },
-                    onError: (error) =>
-                    {
-                        // 使用 UI Element 自带的 Dispatcher 更新 UI
-                        MessagesRichTextBox.Dispatcher.Invoke(() =>
-                        {
-                            // --- 修改错误处理 ---
-                            // 将错误信息也作为 Run 添加到 Paragraph 中
-                            targetParagraph.Inlines.Add(new Run(error) { Foreground = Brushes.Red });
-                            MessagesRichTextBox.ScrollToEnd();
-                            // --- 修改结束 ---
-                        });
-                    });
-            }
-            finally
-            {
-                MessagesRichTextBox.Dispatcher.Invoke(() =>
-                {
-                    _isSending = false;
-                });
-            }
-        }
-
-        // 新增辅助方法：在后台线程流式接收，并调度到 UI 更新
-        private async Task StreamAndAppendResponse(string prompt, string apiKey, TextBlock targetTextBlock)
-        {
-            try
-            {
-                StringBuilder accumulated = new StringBuilder();
-
-                await StreamQwenAPIResponse(prompt, apiKey,
-                    onTextReceived: (text) =>
-                    {
-                        accumulated.Append(text);
-
-                        // 使用 UI Element 自带的 Dispatcher 更新 UI
-                        MessagesRichTextBox.Dispatcher.Invoke(() =>
-                        {
-                            targetTextBlock.Text = accumulated.ToString();
-                            MessagesRichTextBox.ScrollToEnd();
-                        });
-                    },
-                    onError: (error) =>
-                    {
-                        // 使用 UI Element 自带的 Dispatcher 更新 UI
-                        MessagesRichTextBox.Dispatcher.Invoke(() =>
-                        {
-                            targetTextBlock.Text += error;
-                            MessagesRichTextBox.ScrollToEnd();
-                        });
-                    });
-            }
-            finally
-            {
-                // 使用 UI Element 自带的 Dispatcher 重置发送状态
-                MessagesRichTextBox.Dispatcher.Invoke(() =>
-                {
-                    _isSending = false;
-                });
-            }
+            return styledHtml;
         }
 
         /// <summary>
-        /// 生成一个简单的请求摘要，用于在聊天框中展示
+        /// 将消息添加到聊天记录中并更新 WebBrowser 显示（线程安全）
         /// </summary>
-        /// <returns></returns>
+        private void AddMessage(string message, bool isUser)
+        {
+            if (MessagesWebBrowser?.Document is IHTMLDocument3 doc)
+            {
+                var chatContainer = doc.getElementById("chat-container");
+                if (chatContainer == null) return;
+
+                string timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
+                string roleLabel = isUser ? "👤 用户" : "🤖 AI";
+                string className = isUser ? "user-message" : "ai-message";
+
+                string contentHtml = ConvertMarkdownToHtml(message);
+                string messageHtml = $@"
+<div class=""message {className}"">
+    <div class=""message-header"">{roleLabel} · {timestamp}</div>
+    <div class=""message-content"">{contentHtml}</div>
+</div>";
+
+                chatContainer.insertAdjacentHTML("beforeend", messageHtml);
+            }
+        }
+
+        private void UpdateStreamingMessage(string content, string placeholderId)
+        {
+            if (MessagesWebBrowser?.Document is IHTMLDocument3 doc)
+            {
+                var el = doc.getElementById(placeholderId);
+                if (el != null)
+                {
+                    IHTMLElement contentDiv = null;
+                    for (int i = 0; i < el.children.length; i++)
+                    {
+                        var child = el.children.item(i) as IHTMLElement;
+                        if (child != null && child.className == "message-content")
+                        {
+                            contentDiv = child;
+                            break;
+                        }
+                    }
+                    if (contentDiv != null)
+                    {
+                        string html = ConvertMarkdownToHtml(string.IsNullOrEmpty(content) ? "正在生成回答..." : content);
+                        try
+                        {
+                            contentDiv.innerHTML = html;
+                        }
+                        catch { /* 忽略异常 */ }
+                    }
+                }
+            }
+        }
+
+
+        /// <summary>
+        /// 生成一个简单的请求摘要，用于在聊天框中展示 (保持不变)
+        /// </summary>
         private string GenerateRequestSummary()
         {
-            var selectedSessions = FiddlerApplication.UI.GetSelectedSessions(1); // 只取一个就够了做摘要
-
+            var selectedSessions = FiddlerApplication.UI.GetSelectedSessions(1);
             if (selectedSessions == null || selectedSessions.Length == 0)
             {
                 return "[无选中请求]";
@@ -488,17 +430,177 @@ namespace FiddlerAIAnalyzerPlugin
 
             var session = selectedSessions[0];
             var sb = new StringBuilder();
-
-            // 显示 URL 的一部分和总长度
             string shortUrl = session.fullUrl.Length > 100 ? session.fullUrl.Substring(0, 100) + "..." : session.fullUrl;
-            sb.AppendLine($"URL: {shortUrl}");
-
+            sb.AppendLine($"URL: {shortUrl} <br>");
             if (session.RequestBody != null)
-                sb.AppendLine($"请求体大小: {session.RequestBody.Length} bytes");
+                sb.AppendLine($"请求体大小: {session.RequestBody.Length} bytes <br>");
             if (session.ResponseBody != null)
                 sb.AppendLine($"响应体大小: {session.ResponseBody.Length} bytes");
-
             return sb.ToString();
+        }
+
+        private async void OnSendButtonClick(object sender, RoutedEventArgs e)
+        {
+            Button sendButton = sender as Button ?? (Button)this.FindName("SendButton");
+            if (sendButton != null) sendButton.IsEnabled = false;
+
+            try
+            {
+                if (_isSending)
+                {
+                    AddMessage("[提示] 正在处理上一条请求，请稍候...", isUser: false);
+                    return;
+                }
+
+                CollectSettingsFromUI();
+
+                string prompt = InputBox.Text.Trim();
+                if (string.IsNullOrEmpty(prompt))
+                {
+                    AddMessage("请输入问题", isUser: false);
+                    return;
+                }
+
+                InputBox.Clear();
+
+                string apiKey = ApiKeyBox.Password;
+                if (string.IsNullOrWhiteSpace(apiKey))
+                {
+                    AddMessage("[错误] 请先设置有效的 API Key", isUser: false);
+                    return;
+                }
+
+                string requestContent = GetSelectedRequestContent();
+                string fullPrompt;
+                string userMessageToDisplay;
+
+                if (requestContent != null)
+                {
+                    fullPrompt = $"{prompt}\n\n以下是相关的 HTTP 请求和响应信息，请基于此进行分析：\n\n{requestContent}";
+                    userMessageToDisplay = $"{prompt}<br>--- 已附带请求摘要 ---<br>{GenerateRequestSummary()}";
+                }
+                else
+                {
+                    fullPrompt = prompt;
+                    userMessageToDisplay = prompt;
+                }
+
+                AddMessage(userMessageToDisplay, isUser: true);
+
+                _isSending = true;
+
+                // 生成唯一 ID
+                string placeholderId = $"ai-streaming-{Guid.NewGuid():N}";
+
+                // 创建占位符并插入 DOM
+                if (MessagesWebBrowser?.Document is IHTMLDocument3 doc)
+                {
+                    var chatContainer = doc.getElementById("chat-container");
+                    if (chatContainer != null)
+                    {
+                        string placeholderHtml = $@"
+<div class='message ai-message' id='{placeholderId}'>
+    <div class='message-header'>🤖 AI · 正在思考...</div>
+    <div class='message-content'><p>正在生成回答...</p></div>
+</div>";
+                        chatContainer.insertAdjacentHTML("beforeend", placeholderHtml);
+                    }
+                }
+
+                // 启动流式请求
+                _ = Task.Run(async () =>
+                {
+                    var aiResponseBuffer = new StringBuilder();
+                    Exception streamError = null;
+
+                    await StreamQwenAPIResponse(
+                        fullPrompt,
+                        apiKey,
+                        onTextReceived: (text) =>
+                        {
+                            aiResponseBuffer.Append(text);
+                            if (!this.Dispatcher.HasShutdownStarted)
+                            {
+                                this.Dispatcher.BeginInvoke(new Action(() =>
+                                {
+                                    UpdateStreamingMessage(aiResponseBuffer.ToString(), placeholderId);
+                                }));
+                            }
+                        },
+                        onError: (error) =>
+                        {
+                            streamError = new Exception(error);
+                            if (!this.Dispatcher.HasShutdownStarted)
+                            {
+                                this.Dispatcher.BeginInvoke(new Action(() =>
+                                {
+                                    _isSending = false;
+                                    ReplaceStreamingMessage($"[错误] {error}", placeholderId);
+                                }));
+                            }
+                        });
+
+                    if (!this.Dispatcher.HasShutdownStarted)
+                    {
+                        this.Dispatcher.BeginInvoke(new Action(() =>
+                        {
+                            _isSending = false;
+                            ReplaceStreamingMessage(aiResponseBuffer.ToString(), placeholderId);
+                        }));
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                FiddlerApplication.Log.LogString($"Error in OnSendButtonClick: {ex}");
+                _isSending = false;
+                if (!this.Dispatcher.HasShutdownStarted)
+                {
+                    this.Dispatcher.BeginInvoke(new Action(() =>
+                    {
+                        AddMessage($"[严重错误] {ex.Message}", isUser: false);
+                    }));
+                }
+            }
+            finally
+            {
+                if (sendButton != null) sendButton.IsEnabled = true;
+            }
+        }
+
+
+        private void ReplaceStreamingMessage(string finalContent, string placeholderId)
+        {
+            if (MessagesWebBrowser?.Document is IHTMLDocument3 doc)
+            {
+                // 找到并移除占位符
+                IHTMLElement placeholder = doc.getElementById(placeholderId);
+                if (placeholder != null)
+                {
+                    IHTMLDOMNode node = placeholder as IHTMLDOMNode;
+                    if (node?.parentNode != null)
+                    {
+                        node.parentNode.removeChild(node);
+                    }
+                }
+
+                // 添加最终 AI 消息
+                string timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
+                string displayContent = string.IsNullOrEmpty(finalContent) ? "<p>无内容返回。</p>" : ConvertMarkdownToHtml(finalContent);
+
+                string finalMessageHtml = $@"
+<div class=""message ai-message"">
+    <div class=""message-header"">🤖 AI · {timestamp}</div>
+    <div class=""message-content"">{displayContent}</div>
+</div>";
+
+                // 插入新消息
+                var chatContainer = doc.getElementById("chat-container");
+                if (chatContainer != null)
+                {
+                    chatContainer.insertAdjacentHTML("beforeend", finalMessageHtml);
+                }
+            }
         }
 
 
@@ -542,97 +644,55 @@ namespace FiddlerAIAnalyzerPlugin
             MessageBox.Show("配置已保存！");
         }
 
-        // === 其他方法（如 SendButtonClick、CallQwenAPI 等）===
 
 
         public AIChatView()
         {
             InitializeComponent();
-            _currentSettings = PluginSettings.Load(); // 启动时加载配置
-            ApplySettingsToUI(); // 更新界面
+            _currentSettings = PluginSettings.Load();
+            ApplySettingsToUI();
 
-            AddMessage("你好！我是 AI 分析助手。请先在上方设置 API Key，可选中 Fiddler 中的一个或多个请求后提问。", isUser: false);
+            // 初始化空聊天容器
+            string initHtml = @"
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset='utf-8'>
+    <title>Chat</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; font-size: 14px; line-height: 1.6; color: #333; background-color: #fff; margin: 10px; }
+        .message { margin: 10px 0; padding: 4px 8px; border-radius: 8px; border: 1px solid #ddd; }
+        .user-message { background-color: #e3f2fd; text-align: right; }
+        .ai-message { background-color: #f5f5f5; }
+        .message-header { font-size: 12px; color: #666; margin-bottom: 5px; }
+        .message-content p { margin: 0; line-height: 1.5; }
+        pre { background-color: #f6f8fa; border-radius: 6px; padding: 16px; overflow: auto; font-size: 85%; line-height: 1.45; border: 1px solid #d0d7de; }
+        code { background-color: rgba(110,118,129,0.1); padding: 0.2em 0.4em; border-radius: 6px; font-size: 85%; }
+        pre code { background-color: transparent; padding: 0; }
+        blockquote { margin: 0; padding: 0 1em; color: #6a737d; border-left: 0.25em solid #dfe2e5; }
+        h1, h2, h3, h4, h5, h6 { margin-top: 24px; margin-bottom: 16px; font-weight: 600; line-height: 1.25; }
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #f1f1f1; }
+        ::-webkit-scrollbar-thumb { background: #c1c1c1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #a8a8a8; }
+    </style>
+</head>
+<body>
+    <div id='chat-container'></div>
+</body>
+</html>";
+
+            MessagesWebBrowser.NavigateToString(initHtml);
+
+            // 等待加载完成后显示欢迎语
+            MessagesWebBrowser.LoadCompleted += (s, e) =>
+            {
+                AddMessage("你好！我是 AI 分析助手。请先在上方设置 API Key，可选中 Fiddler 中的一个或多个请求后提问。", isUser: false);
+            };
         }
 
 
 
-        private void AddMessage(string message, bool isUser)
-        {
-            if (MessagesRichTextBox?.Document == null) return;
-
-            var document = MessagesRichTextBox.Document;
-
-            // 定义消息样式常量 (可以在类级别定义为静态只读以供复用)
-            Brush userMessageBackground = new SolidColorBrush(Color.FromArgb(30, 0, 122, 204)); // 浅蓝色，半透明
-            Brush aiMessageBackground = new SolidColorBrush(Color.FromArgb(30, 30, 30, 30));   // 浅灰色，半透明
-            Brush messageBorderBrush = new SolidColorBrush(Color.FromRgb(200, 200, 200));
-            const double messageBorderThicknessValue = 1.0;
-            Thickness messageMargin = new Thickness(0, 5, 0, 5);
-            Thickness messagePadding = new Thickness(8, 6, 8, 6); // 内边距
-
-            // ---- AI 消息 ----
-            if (!isUser)
-            {
-                var aiParagraph = new Paragraph();
-
-                // --- 添加背景色和边框 ---
-                aiParagraph.Background = aiMessageBackground;
-                aiParagraph.BorderBrush = messageBorderBrush;
-                aiParagraph.BorderThickness = new Thickness(messageBorderThicknessValue);
-                aiParagraph.Padding = messagePadding; // 添加内边距
-                                                      // --- 结束添加样式 ---
-
-                // 例如，添加一个表示身份的小标签
-                var aiLabelRun = new Run("[AI] ") { Foreground = Brushes.Green, FontWeight = FontWeights.Bold };
-                aiParagraph.Inlines.Add(aiLabelRun);
-
-                // 添加实际消息内容 (这部分是可选择的)
-                AddTextAsRuns(aiParagraph.Inlines, message, Brushes.Black, FontWeights.Normal);
-
-                // 设置段落的外边距
-                aiParagraph.Margin = messageMargin;
-
-                document.Blocks.Add(aiParagraph);
-                MessagesRichTextBox.ScrollToEnd();
-                return;
-            }
-
-            // ---- 用户消息 ----
-
-            // 1. 时间标签 (这部分可以做成不可选的装饰)
-            var timeText = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
-            var userLabelPara = new Paragraph(new Run($"👤 用户 · {timeText}")
-            {
-                FontSize = 10,
-                FontWeight = FontWeights.Bold,
-                Foreground = new SolidColorBrush(Color.FromRgb(100, 100, 100))
-            })
-            {
-                Margin = new Thickness(0, 5, 0, 2), // 段落间距
-                TextAlignment = TextAlignment.Right // 右对齐用户标签
-            };
-            document.Blocks.Add(userLabelPara);
-
-            // 2. 用户消息主体 (这部分是可选择的主要内容)
-            var userParagraph = new Paragraph()
-            {
-                Margin = new Thickness(0, 0, 0, 5),
-                TextAlignment = TextAlignment.Right // 右对齐内容
-            };
-
-            // --- 添加背景色和边框 ---
-            userParagraph.Background = userMessageBackground;
-            userParagraph.BorderBrush = messageBorderBrush;
-            userParagraph.BorderThickness = new Thickness(messageBorderThicknessValue);
-            userParagraph.Padding = messagePadding; // 添加内边距
-                                                    // --- 结束添加样式 ---
-
-            // 应用用户消息的内容
-            AddTextAsRuns(userParagraph.Inlines, message, Brushes.Black, FontWeights.Normal);
-
-            document.Blocks.Add(userParagraph);
-            MessagesRichTextBox.ScrollToEnd();
-        }
 
         // 辅助方法：将字符串按代码块分割，并添加到 Inlines 集合中
         private void AddTextAsRuns(InlineCollection inlines, string text, Brush foreground, FontWeight fontWeight)

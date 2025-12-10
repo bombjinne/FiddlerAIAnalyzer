@@ -35,7 +35,7 @@
         </GroupBox>
 
         <!-- ====== 聊天历史区 ====== -->
-        <!-- ✅ 修改为 RichTextBox 以支持复制 -->
+        <!-- ✅ 修改为 RichTextBox 以支持复制 
         <RichTextBox 
      x:Name="MessagesRichTextBox"
      Grid.Row="2"
@@ -49,10 +49,20 @@
      HorizontalAlignment="Stretch"
      VerticalScrollBarVisibility="Auto">
             <FlowDocument>
-                <!-- 可以保留初始空段落，也可以移除 -->
                 <Paragraph/>
             </FlowDocument>
         </RichTextBox>
+        -->
+        <Border Grid.Row="2" 
+                BorderBrush="LightGray" 
+                BorderThickness="1" 
+                Background="White" 
+                CornerRadius="4" 
+                Margin="0,0,0,5">
+            <WebBrowser x:Name="MessagesWebBrowser" />
+        </Border>
+
+
 
         <!-- ====== 输入区 ====== -->
         <Grid Grid.Row="3" Margin="0">
@@ -77,6 +87,7 @@
 
             <!-- 发送按钮：高度与 TextBox 一致 -->
             <Button Grid.Column="1"
+                    x:Name="SendButton"
                     Content="发送"
                     Width="70"
                     Margin="5,0,0,0"
